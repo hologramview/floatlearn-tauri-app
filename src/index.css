@@ -1,0 +1,98 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  /* Prevent text selection globally */
+  -webkit-user-select: none !important;
+  -moz-user-select: none !important;
+  -ms-user-select: none !important;
+  user-select: none !important;
+  -webkit-user-drag: none !important;
+  -webkit-touch-callout: none !important;
+}
+
+/* Keep window and body transparent */
+html, body, #root {
+  background: transparent !important;
+  background-color: transparent !important;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+button {
+  padding: 4px 8px;
+  border: 1px solid #ddd;
+  background: rgba(255, 255, 255, 0.8) !important;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: rgba(245, 245, 245, 0.9) !important;
+}
+
+input[type="number"] {
+  padding: 4px 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  width: 80px;
+  background: rgba(255, 255, 255, 0.8) !important;
+}
+
+/* Prevent text highlighting on drag */
+*::selection {
+  background: transparent !important;
+}
+
+*::-moz-selection {
+  background: transparent !important;
+}
+
+/* Ensure draggable elements show the right cursor */
+[data-tauri-drag-region] {
+  cursor: grab !important;
+}
+
+[data-tauri-drag-region]:active {
+  cursor: grabbing !important;
+}
+
+/* Prevent any pseudo-element duplicates */
+* {
+  position: relative;
+}
+
+*::before,
+*::after {
+  display: none !important;
+}
+
+/* Force single layer rendering */
+.flashcard-container {
+  isolation: isolate;
+  will-change: auto;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+/* Ensure no text duplicates */
+.flashcard-text {
+  position: relative;
+  z-index: 1;
+  isolation: isolate;
+  /* Prevent any layer effects that could cause duplication */
+  text-rendering: optimizeSpeed;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Force complete reflow on content change */
+  contain: layout style;
+  /* Ensure text clears completely */
+  background: transparent;
+  overflow: hidden;
+  /* Prevent text from stacking */
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+}
