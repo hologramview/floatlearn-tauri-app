@@ -1,4 +1,6 @@
-use tauri::{command, CustomMenuItem, Manager, SystemTray, SystemTrayEvent, SystemTrayMenu, SystemTrayMenuItem, WindowEvent};
+use tauri::{command, CustomMenuItem, GlobalShortcutManager, Manager, SystemTray, SystemTrayEvent, SystemTrayMenu, SystemTrayMenuItem, WindowEvent};
+use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
 
 #[cfg(target_os = "macos")]
 use cocoa::base::id;
@@ -7,8 +9,161 @@ use objc::runtime::YES;
 #[cfg(target_os = "macos")]
 use objc::{msg_send, sel, sel_impl};
 
+// Global state to track click-through mode
+type AppState = Arc<Mutex<HashMap<String, bool>>>;
+
+#[command]
+fn enable_temporary_icons(app_handle: tauri::AppHandle, state: tauri::State<AppState>) -> bool {
+    let state_map = state.lock().unwrap();
+    let is_click_through = *state_map.get("click_through").unwrap_or(&false);
+    
+    if !is_click_through {
+        // Not in click-through mode, no need for temporary icon access
+        return false;
+    }
+    
+    println!("🔍 Temporarily enabling icon access in click-through mode");
+    
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(main_window) = app_handle.get_window("main") {
+            if let Ok(ns_window) = main_window.ns_window() {
+                unsafe {
+                    let ns_window: id = ns_window as *mut std::ffi::c_void as id;
+                    
+                    // Temporarily enable mouse events
+                    let _: () = msg_send![ns_window, setIgnoresMouseEvents: false];
+                    println!("✅ Temporary icon access enabled for 3 seconds");
+                }
+                
+                // Set up a timer to disable mouse events again after 3 seconds
+                let app_handle_clone = app_handle.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    
+                    // Re-disable mouse events
+                    if let Some(main_window) = app_handle_clone.get_window("main") {
+                        if let Ok(ns_window) = main_window.ns_window() {
+                            unsafe {
+                                let ns_window: id = ns_window as *mut std::ffi::c_void as id;
+                                let _: () = msg_send![ns_window, setIgnoresMouseEvents: true];
+                                println!("❌ Temporary icon access disabled - back to click-through mode");
+                            }
+                        }
+                    }
+                });
+            }
+        }
+    }
+    
+    true
+}
+
+#[command]
+fn toggle_click_through(app_handle: tauri::AppHandle, state: tauri::State<AppState>) -> bool {
+    let mut state_map = state.lock().unwrap();
+    let current_state = *state_map.get("click_through").unwrap_or(&false);
+    let new_state = !current_state;
+    state_map.insert("click_through".to_string(), new_state);
+    
+    println!("🔄 Toggling click-through: {} -> {}", current_state, new_state);
+    
+    // Apply the new click-through state
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(main_window) = app_handle.get_window("main") {
+            if let Ok(ns_window) = main_window.ns_window() {
+                unsafe {
+                    let ns_window: id = ns_window as *mut std::ffi::c_void as id;
+                    
+                    if new_state {
+                        // Enable click-through
+                        let _: () = msg_send![ns_window, setIgnoresMouseEvents: true];
+                        let _: () = msg_send![ns_window, setAcceptsMouseMovedEvents: false];
+                        let _: () = msg_send![ns_window, setMovableByWindowBackground: false];
+                        let level: i32 = 3; // NSStatusWindowLevel
+                        let _: () = msg_send![ns_window, setLevel: level];
+                        println!("✅ Click-through mode ENABLED via shortcut");
+                    } else {
+                        // Disable click-through
+                        let _: () = msg_send![ns_window, setIgnoresMouseEvents: false];
+                        let _: () = msg_send![ns_window, setAcceptsMouseMovedEvents: true];
+                        let _: () = msg_send![ns_window, setMovableByWindowBackground: true];
+                        let level: i32 = 5; // NSFloatingWindowLevel
+                        let _: () = msg_send![ns_window, setLevel: level];
+                        println!("✅ Click-through mode DISABLED via shortcut");
+                    }
+                }
+            }
+        }
+    }
+    
+    // Emit event to update frontend state
+    let _ = app_handle.emit_all("click-through-toggled", new_state);
+    
+    new_state
+}
+
+#[command]
+fn set_click_through(app_handle: tauri::AppHandle, click_through: bool, state: tauri::State<AppState>) {
+    println!("set_click_through called with click_through: {}", click_through);
+    
+    // Update state
+    let mut state_map = state.lock().unwrap();
+    state_map.insert("click_through".to_string(), click_through);
+    
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(main_window) = app_handle.get_window("main") {
+            if let Ok(ns_window) = main_window.ns_window() {
+                unsafe {
+                    let ns_window: id = ns_window as *mut std::ffi::c_void as id;
+                    
+                    if click_through {
+                        // Enable true click-through - ignore mouse events at window level
+                        let _: () = msg_send![ns_window, setIgnoresMouseEvents: true];
+                        // Disable dragging when in click-through mode
+                        let _: () = msg_send![ns_window, setMovableByWindowBackground: false];
+                        // Reduce window activation sensitivity
+                        let _: () = msg_send![ns_window, setAcceptsMouseMovedEvents: false];
+                        // Set to a lower window level to be less intrusive
+                        let level: i32 = 3; // NSStatusWindowLevel - less intrusive
+                        let _: () = msg_send![ns_window, setLevel: level];
+                        println!("✅ Click-through mode ENABLED - window ignores all mouse events");
+                    } else {
+                        // Normal interactive mode
+                        let _: () = msg_send![ns_window, setIgnoresMouseEvents: false];
+                        // Re-enable dragging
+                        let _: () = msg_send![ns_window, setMovableByWindowBackground: true];
+                        // Re-enable window activation
+                        let _: () = msg_send![ns_window, setAcceptsMouseMovedEvents: true];
+                        // Restore normal floating level
+                        let level: i32 = 5; // NSFloatingWindowLevel
+                        let _: () = msg_send![ns_window, setLevel: level];
+                        println!("✅ Click-through mode DISABLED via shortcut");
+                    }
+                }
+            } else {
+                println!("Failed to get ns_window");
+            }
+        } else {
+            println!("Failed to get main window");
+        }
+    }
+    
+    // Emit event to sync with UI (for consistency with toggle command)
+    let _ = app_handle.emit_all("click-through-toggled", click_through);
+    
+    #[cfg(not(target_os = "macos"))]
+    {
+        println!("set_click_through: Not on macOS, ignoring");
+    }
+}
+
 #[command]
 fn update_window_spaces(app_handle: tauri::AppHandle, show_on_all_spaces: bool) {
+    println!("update_window_spaces called with show_on_all_spaces: {}", show_on_all_spaces);
+    
     #[cfg(target_os = "macos")]
     {
         if let Some(main_window) = app_handle.get_window("main") {
@@ -21,16 +176,27 @@ fn update_window_spaces(app_handle: tauri::AppHandle, show_on_all_spaces: bool) 
                     if show_on_all_spaces {
                         collection_behavior |= 1 << 0; // NSWindowCollectionBehaviorCanJoinAllSpaces
                         collection_behavior |= 1 << 4; // NSWindowCollectionBehaviorStationary (always stay in place when on all spaces)
+                        println!("Setting collection behavior to: {} (show on all spaces)", collection_behavior);
                     } else {
                         // Reset to normal window behavior
                         collection_behavior = 0;
+                        println!("Setting collection behavior to: {} (normal window behavior)", collection_behavior);
                     }
                     
                     let _: () = msg_send![ns_window, setCollectionBehavior: collection_behavior];
-                    println!("Updated window spaces: show_on_all_spaces={}", show_on_all_spaces);
+                    println!("Successfully updated window spaces behavior");
                 }
+            } else {
+                println!("Failed to get ns_window");
             }
+        } else {
+            println!("Failed to get main window");
         }
+    }
+    
+    #[cfg(not(target_os = "macos"))]
+    {
+        println!("update_window_spaces: Not on macOS, ignoring");
     }
 }
 
@@ -513,6 +679,115 @@ fn resize_window_for_content(app_handle: tauri::AppHandle, content_width: f64, c
 }
 
 #[command]
+async fn check_ollama_connection() -> Result<String, String> {
+    use reqwest::Client;
+    
+    println!("📡 Checking Ollama connection...");
+    
+    let client = Client::new();
+    
+    // Try to connect to Ollama API
+    match client
+        .get("http://localhost:11434/api/version")
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await
+    {
+        Ok(response) => {
+            if response.status().is_success() {
+                let msg = "✅ Ollama connection successful";
+                println!("{}", msg);
+                Ok(msg.to_string())
+            } else {
+                let error_msg = format!("❌ Ollama returned status: {}", response.status());
+                println!("{}", error_msg);
+                Err(error_msg)
+            }
+        }
+        Err(e) => {
+            let error_msg = format!("❌ Failed to connect to Ollama: {}", e);
+            println!("{}", error_msg);
+            Err(error_msg)
+        }
+    }
+}
+
+#[command]
+fn test_drag(app_handle: tauri::AppHandle) -> Result<String, String> {
+    println!("👍 Test drag command called");
+    
+    if let Some(window) = app_handle.get_window("main") {
+        // Try to start dragging
+        match window.start_dragging() {
+            Ok(_) => {
+                let msg = "✅ Drag started successfully";
+                println!("{}", msg);
+                Ok(msg.to_string())
+            }
+            Err(e) => {
+                let error_msg = format!("❌ Failed to start drag: {}", e);
+                println!("{}", error_msg);
+                Err(error_msg)
+            }
+        }
+    } else {
+        let error_msg = "❌ Main window not found";
+        println!("{}", error_msg);
+        Err(error_msg.to_string())
+    }
+}
+
+#[command]
+fn greet(name: &str) -> String {
+    format!("Hello, {}! You've been greeted from Rust!", name)
+}
+
+#[command]
+fn fix_window_interactivity(app_handle: tauri::AppHandle) -> Result<String, String> {
+    println!("🔧 Fixing window interactivity...");
+    
+    if let Some(window) = app_handle.get_window("main") {
+        // Explicitly disable click-through
+        window.set_ignore_cursor_events(false).map_err(|e| e.to_string())?;
+        
+        // Make sure window can be focused
+        window.set_focus().map_err(|e| e.to_string())?;
+        
+        let msg = "✅ Window interactivity fixed";
+        println!("{}", msg);
+        Ok(msg.to_string())
+    } else {
+        let error_msg = "❌ Main window not found";
+        println!("{}", error_msg);
+        Err(error_msg.to_string())
+    }
+}
+
+#[command]
+fn quit_app(app_handle: tauri::AppHandle) -> Result<String, String> {
+    println!("❌ Quit app command called");
+    
+    // Try multiple exit strategies
+    
+    // Strategy 1: Close all windows first
+    println!("🧿 Closing all windows...");
+    let windows = app_handle.windows();
+    for (label, window) in windows {
+        println!("❌ Closing window: {}", label);
+        if let Err(e) = window.close() {
+            println!("⚠️ Failed to close window {}: {}", label, e);
+        }
+    }
+    
+    // Strategy 2: Exit the application
+    println!("❌ Exiting application...");
+    app_handle.exit(0);
+    
+    // This line should never be reached, but just in case
+    Ok("Quit command executed".to_string())
+}
+
+#[command]
 fn debug_positions(app_handle: tauri::AppHandle, auto_detect_grid: bool, manual_grid_cols: i32, manual_grid_rows: i32) -> Vec<(i32, f64, f64)> {
     let mut positions = Vec::new();
     
@@ -589,6 +864,17 @@ fn debug_positions(app_handle: tauri::AppHandle, auto_detect_grid: bool, manual_
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Set activation policy as early as possible
+    #[cfg(target_os = "macos")]
+    {
+        use cocoa::appkit::{NSApp, NSApplication, NSApplicationActivationPolicyProhibited};
+        unsafe {
+            let ns_app = NSApp();
+            ns_app.setActivationPolicy_(NSApplicationActivationPolicyProhibited);
+            println!("🚀 Early activation policy set: NSApplicationActivationPolicyProhibited");
+        }
+    }
+    
     let quit = CustomMenuItem::new("quit".to_string(), "Quit");
     let preferences = CustomMenuItem::new("preferences".to_string(), "Preferences");
     let tray_menu = SystemTrayMenu::new()
@@ -598,8 +884,11 @@ pub fn run() {
 
     let system_tray = SystemTray::new().with_menu(tray_menu);
 
+    let app_state: AppState = Arc::new(Mutex::new(HashMap::new()));
+
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![update_window_spaces, set_window_position, get_screen_info, save_manual_position, debug_positions, show_settings_window, show_main_window, initialize_window_position, resize_window_for_content, get_all_monitors_info])
+        .manage(app_state)
+        .invoke_handler(tauri::generate_handler![enable_temporary_icons, update_window_spaces, set_window_position, get_screen_info, save_manual_position, check_ollama_connection, test_drag, greet, fix_window_interactivity, quit_app, debug_positions, show_settings_window, show_main_window, initialize_window_position, resize_window_for_content, get_all_monitors_info])
         .system_tray(system_tray)
         .on_system_tray_event(|app, event| match event {
             SystemTrayEvent::MenuItemClick { id, .. } => match id.as_str() {
@@ -628,7 +917,29 @@ pub fn run() {
             _ => {}
         })
 .setup(|app| {
-            // TODO: Add global shortcut later - API changed in Tauri v1
+            // Configure as background app (no dock icon, no menu) - FIRST PRIORITY
+            #[cfg(target_os = "macos")]
+            {
+                use cocoa::appkit::{NSApp, NSApplication, NSApplicationActivationPolicyProhibited};
+                unsafe {
+                    let ns_app = NSApp();
+                    let result = ns_app.setActivationPolicy_(NSApplicationActivationPolicyProhibited);
+                    println!("🔧 Set NSApplicationActivationPolicyProhibited: success = {}", result);
+                }
+            }
+            
+            // Register shortcut for temporary icon access when in click-through mode
+            let app_handle = app.handle();
+            app.global_shortcut_manager()
+                .register("CmdOrCtrl+Shift+I", move || {
+                    println!("🔍 Global shortcut triggered: CmdOrCtrl+Shift+I (temporary icons)");
+                    let app_state: tauri::State<AppState> = app_handle.state();
+                    let _ = enable_temporary_icons(app_handle.clone(), app_state);
+                })
+                .expect("Failed to register temporary icons shortcut");
+            
+            println!("✅ Registered global shortcuts:");
+            println!("  - CmdOrCtrl+Shift+I (temporary icon access)");
             
             if let Some(main_window) = app.get_window("main") {
                 // Set floating window level on macOS for non-interfering always-on-top behavior
@@ -637,16 +948,13 @@ pub fn run() {
                     if let Ok(ns_window) = main_window.ns_window() {
                         unsafe {
                             let ns_window: id = ns_window as *mut std::ffi::c_void as id;
-                            // Set to floating window level (5) - stays on top but doesn't interfere
-                            let level: i32 = 5; // NSFloatingWindowLevel
+                            // Set to utility window level - like menubar app panels
+                            let level: i32 = 19; // NSPopUpMenuWindowLevel - same as menubar dropdowns
                             let _: () = msg_send![ns_window, setLevel: level];
-                            // Enable dragging by mouse down anywhere on window background
-                            let _: () = msg_send![ns_window, setMovableByWindowBackground: YES];
-                            // Allow mouse events even when window is not focused
-                            let _: () = msg_send![ns_window, setIgnoresMouseEvents: false];
-                            // Ensure window accepts first mouse click for dragging
-                            let _: () = msg_send![ns_window, setAcceptsMouseMovedEvents: YES];
-                            // Set default window behavior (both enabled by default)
+                            // Disable dragging by mouse down on window background - only hand icon should drag
+                            let _: () = msg_send![ns_window, setMovableByWindowBackground: false];
+                            // Set initial window behavior - will be updated by settings
+                            // Default to showOnAllSpaces = true for initial setup
                             let collection_behavior: i32 = 1 << 0 | 1 << 4; // NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorStationary
                             let _: () = msg_send![ns_window, setCollectionBehavior: collection_behavior];
                         }

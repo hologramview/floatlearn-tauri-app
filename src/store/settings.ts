@@ -14,7 +14,7 @@ export interface AppearanceSettings {
   cardTransparent: boolean;
   cardColor: string;
   cardOpacity: number; // 0.0 to 1.0
-  cardSize: 'small' | 'medium' | 'large';
+  cardSize: 'small' | 'large';
   autoCardSize: boolean; // automatically choose size based on content
   
   // Color rotation
@@ -61,6 +61,17 @@ export interface AppearanceSettings {
   selectedContentTypeCode: string;
   selectedContentTypeIcon: string;
   favoriteContentTypes: string[]; // Array of favorite content type codes
+  
+  // Card info settings
+  cardInfoAnimation: 'flip' | 'slide';
+  cardInfoDirection: 'left' | 'right' | 'top' | 'bottom';
+  cardInfoShowTranslation: boolean;
+  cardInfoShowDefinition: boolean;
+  cardInfoShowPartOfSpeech: boolean;
+  cardInfoShowExamples: boolean;
+  cardInfoShowPronunciation: boolean;
+  cardInfoMaxExamples: number;
+  cardInfoCloseBehavior: 'manual' | 'mouse-leave' | 'both';
 }
 
 interface SettingsStore {
@@ -79,7 +90,7 @@ const defaultAppearance: AppearanceSettings = {
   cardTransparent: true,
   cardColor: 'rgba(255, 255, 255, 0.1)',
   cardOpacity: 0.1,
-  cardSize: 'medium',
+  cardSize: 'small',
   autoCardSize: true,
   colorRotation: true,
   darkMode: false,
@@ -106,6 +117,17 @@ const defaultAppearance: AppearanceSettings = {
   selectedContentTypeCode: 'WORDS',
   selectedContentTypeIcon: '🔤',
   favoriteContentTypes: ['WORDS', 'SENTENCES', 'EXPRESSIONS', 'PHRASAL_VERBS'], // Default favorite content types
+  
+  // Card info defaults
+  cardInfoAnimation: 'flip',
+  cardInfoDirection: 'right',
+  cardInfoShowTranslation: true,
+  cardInfoShowDefinition: true,
+  cardInfoShowPartOfSpeech: true,
+  cardInfoShowExamples: true,
+  cardInfoShowPronunciation: false,
+  cardInfoMaxExamples: 2,
+  cardInfoCloseBehavior: 'both',
 };
 
 console.log('Default appearance settings:', defaultAppearance);
@@ -118,6 +140,7 @@ export const useSettings = create<SettingsStore>()(
     (set, get) => ({
       appearance: defaultAppearance,
       updateAppearance: async (newSettings) => {
+        console.log('Settings store updating appearance:', newSettings);
         const updatedAppearance = { ...get().appearance, ...newSettings };
         set(() => ({ appearance: updatedAppearance }));
         
@@ -125,7 +148,9 @@ export const useSettings = create<SettingsStore>()(
         if (debounceTimeout) clearTimeout(debounceTimeout);
         debounceTimeout = setTimeout(async () => {
           try {
+            console.log('Emitting settings-updated event:', updatedAppearance);
             await emit('settings-updated', updatedAppearance);
+            console.log('Settings event emitted successfully');
           } catch (error) {
             console.warn('Event emit failed, relying on storage sync:', error);
           }

@@ -18,7 +18,7 @@
         "all": true
       },
       "globalShortcut": {
-        "all": false
+        "all": true
       },
       "shell": {
         "all": false,
@@ -35,7 +35,15 @@
         "icons/128x128@2x.png",
         "icons/icon.icns",
         "icons/icon.ico"
-      ]
+      ],
+      "macOS": {
+        "frameworks": [],
+        "minimumSystemVersion": "",
+        "exceptionDomain": "",
+        "signingIdentity": null,
+        "providerShortName": null,
+        "entitlements": null
+      }
     },
     "security": {
       "csp": null
@@ -61,8 +69,9 @@
         "center": true,
         "visible": true,
         "skipTaskbar": true,
-        "focus": true,
-        "acceptFirstMouse": true
+        "focus": false,
+        "acceptFirstMouse": true,
+        "hiddenTitle": true
       },
       {
         "label": "settings",
